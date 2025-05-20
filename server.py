@@ -1,6 +1,8 @@
 import threading
 import random
 import time
+import uuid
+
 from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__)
@@ -11,6 +13,7 @@ ROOM_TIMEOUT = 1800  # 30 minutes
 class GameRoom:
     def __init__(self, code):
         self.code = code
+        self.public = False #if True, then join random game that is True or create new room if not any near. Else, will create private room that wont accept random users
         self.players = {}  # user_id -> list of cards
         self.turn_order = []
         self.pile = []  # cards on table
@@ -19,7 +22,6 @@ class GameRoom:
         self.active = False
         self.last_used = time.time()
         self.thread = threading.Thread(target=self.run_game)
-
     def touch(self):
         self.last_used = time.time()
 
@@ -29,7 +31,7 @@ class GameRoom:
         self.thread.start()
     #['♠' =s, '♥' = h, '♦' = d, '♣' =c]
     def distribute_cards(self):
-        deck = [r + s for r in self.ranks for s in ['s', 'h', 'd', 'c']]
+        deck = [r + s for r in self.ranks for s in ['S', 'H', 'D', 'C']]
         random.shuffle(deck)
         num_players = len(self.players)
         for i, (uid, hand) in enumerate(self.players.items()):
@@ -73,9 +75,7 @@ def cleanup_rooms():
 cleanup_thread = threading.Thread(target=cleanup_rooms, daemon=True)
 cleanup_thread.start()
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+
 
 @app.route('/create', methods=['POST'])
 def create_room():
@@ -89,27 +89,34 @@ def create_room():
 def join_room():
     data = request.get_json()
     code = data.get('room_code')
-    uid = request.remote_addr
     with lock:
         room = rooms.get(code)
         if not room or len(room.players) >= 4:
             return jsonify({'error': 'Room full or not found'}), 404
+
+        # 1) create a fresh player‑ID
+        uid = uuid.uuid4().hex  
         room.players[uid] = []
         room.touch()
         if len(room.players) >= 2 and not room.active:
             room.start()
-    return jsonify({'joined': True})
+
+    # 2) send it back to the client
+    return jsonify({'joined': True, 'uid': uid})
+
 
 @app.route('/rooms/<code>/play', methods=['POST'])
 def play(code):
     data = request.get_json()
-    uid = request.remote_addr
+    uid = data.get('uid')
     cards = data.get('cards', [])
     room = rooms.get(code)
-    if not room:
-        return jsonify({'error': 'Room not found'}), 404
+    if not room or uid not in room.players:
+        return jsonify({'error': 'Invalid room or player'}), 404
+
     room.play_card(uid, cards)
     return jsonify({'status': 'played', 'next_rank': room.current_rank})
+
 
 @app.route('/rooms/<code>/bullshit', methods=['POST'])
 def bullshit(code):
