@@ -15,6 +15,8 @@ class GameRoom:
         self.code = code
         self.public = False #if True, then join random game that is True or create new room if not any near. Else, will create private room that wont accept random users
         self.players = {}  # user_id -> list of cards
+        self.usernames = {}  # user_id -> nickname
+
         self.turn_order = []
         self.pile = []  # cards on table
         self.current_rank = 'A'
@@ -89,20 +91,22 @@ def create_room():
 def join_room():
     data = request.get_json()
     code = data.get('room_code')
+    nickname = data.get('nickname', '')  # Default to empty string
+
     with lock:
         room = rooms.get(code)
         if not room or len(room.players) >= 4:
             return jsonify({'error': 'Room full or not found'}), 404
 
-        # 1) create a fresh player‑ID
         uid = uuid.uuid4().hex  
         room.players[uid] = []
+        room.usernames[uid] = nickname or f'Player-{len(room.players)+1}'
         room.touch()
+
         if len(room.players) >= 2 and not room.active:
             room.start()
 
-    # 2) send it back to the client
-    return jsonify({'joined': True, 'uid': uid})
+    return jsonify({'joined': True, 'uid': uid, 'nickname': room.usernames[uid]})
 
 
 @app.route('/rooms/<code>/play', methods=['POST'])
